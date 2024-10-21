@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useToast } from "@/hooks/use-toast";
+import DOMPurify from 'dompurify';
 
 interface HtmlPreviewProps {
   htmlContent: string | null;
@@ -14,80 +15,146 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { toast } = useToast();
 
+  // Função auxiliar para converter caminhos relativos em absolutos
+  const convertToAbsolutePath = (path: string): string => {
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+    // Remover './' do início do caminho, se presente
+    const cleanPath = path.replace(/^\.\//, '');
+    // Lidar com caminhos que começam com '../'
+    const upDirCount = (cleanPath.match(/\.\.\//g) || []).length;
+    const pathParts = cleanPath.split('/').filter(part => part !== '..');
+    const currentPathParts = window.location.pathname.split('/').filter(Boolean);
+    const newPathParts = [...currentPathParts.slice(0, -upDirCount), ...pathParts];
+    return `${window.location.origin}/${newPathParts.join('/')}`;
+  };
+
+  const sanitizeHtml = (html: string): { sanitizedHtml: string; extractedCss: string } => {
+    // Remove todos os scripts
+    const withoutScripts = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+    
+    // Extrai e sanitiza o CSS
+    const cssLinks = withoutScripts.match(/<link[^>]+rel="stylesheet"[^>]*>/g) || [];
+    const extractedCss = cssLinks.map(link => {
+      const hrefMatch = link.match(/href="([^"]+)"/);
+      if (hrefMatch) {
+        const absolutePath = convertToAbsolutePath(hrefMatch[1]);
+        return `@import url('${absolutePath}');`;
+      }
+      return '';
+    }).join('\n');
+
+    // Configuração personalizada do DOMPurify
+    DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+      if (data.attrName.startsWith('ng-') || data.attrName === 'onblur') {
+        data.allowedAttributes[data.attrName] = true;
+      }
+    });
+
+    // Use DOMPurify para limpar o HTML
+    const clean = DOMPurify.sanitize(withoutScripts, {
+      FORBID_TAGS: ['script'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+      ADD_TAGS: ['link'],
+      ADD_ATTR: ['href', 'rel', 'type', 'class', 'id', 'style', 'ng-*', 'onblur'],
+      ALLOW_DATA_ATTR: true,
+      ALLOW_UNKNOWN_PROTOCOLS: true,
+      ALLOW_ARIA_ATTR: true,
+      WHOLE_DOCUMENT: true,
+      KEEP_CONTENT: true,
+      RETURN_DOM: true,
+      RETURN_DOM_FRAGMENT: false,
+      RETURN_DOM_IMPORT: false,
+    });
+
+    // Converter o DOM limpo de volta para string, preservando a ordem dos atributos
+    const serializer = new XMLSerializer();
+    let cleanHtml = serializer.serializeToString(clean);
+
+    // Substitui os caminhos das imagens por caminhos absolutos
+    cleanHtml = cleanHtml.replace(/<img[^>]+src="([^"]+)"[^>]*>/g, (match, src) => {
+      const absoluteSrc = convertToAbsolutePath(src);
+      return match.replace(src, absoluteSrc);
+    });
+
+    // Remove o hook personalizado para evitar efeitos colaterais em futuras chamadas
+    DOMPurify.removeHook('uponSanitizeAttribute');
+
+    return { sanitizedHtml: cleanHtml, extractedCss };
+  };
+
   useEffect(() => {
-    if (htmlContent) {
+    let isMounted = true;
+
+    const loadContent = async () => {
+      if (!htmlContent || !isMounted) return;
+
       setIsLoading(true);
       setError(null);
-      setTimeout(() => {
-        setIsLoading(false);
-      }, 500);
-    } else {
-      setIsLoading(false);
-      setError(null);
-    }
-  }, [htmlContent]);
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data.type === 'VERIFY_ELEMENT_RESULT') {
-        const { selector, found, error } = event.data;
-        if (error) {
-          toast({
-            title: "Erro de sintaxe",
-            description: `Erro ao verificar o seletor "${selector}": ${error}`,
-            variant: "destructive",
-          });
-        } else if (found && iframeRef.current && iframeRef.current.contentWindow) {
-          iframeRef.current.contentWindow.postMessage({ type: 'HIGHLIGHT_ELEMENT', selector }, '*');
-          
-          const toastInstance = toast({
-            title: "Elemento encontrado",
-            description: `O seletor "${selector}" foi localizado no HTML.`,
-            duration: 5000,
-          });
-
-          // Remove o destaque quando o toast for fechado
-          const removeHighlight = () => {
-            if (iframeRef.current && iframeRef.current.contentWindow) {
-              iframeRef.current.contentWindow.postMessage({ type: 'REMOVE_HIGHLIGHT', selector }, '*');
-            }
-          };
-
-          // Configura um timer para remover o destaque após 5 segundos
-          const timer = setTimeout(removeHighlight, 5000);
-
-          // Se o toast for fechado manualmente, remove o destaque imediatamente
-          toastInstance.dismiss = () => {
-            clearTimeout(timer);
-            removeHighlight();
-            toast.dismiss(toastInstance.id);
-          };
-        } else {
-          toast({
-            title: "Elemento não encontrado",
-            description: `O seletor "${selector}" não foi localizado no HTML.`,
-            variant: "destructive",
-          });
+      try {
+        const { sanitizedHtml, extractedCss } = sanitizeHtml(htmlContent);
+        if (iframeRef.current && iframeRef.current.contentDocument && isMounted) {
+          const iframeDoc = iframeRef.current.contentDocument;
+          iframeDoc.open();
+          iframeDoc.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <style>
+                  ${extractedCss}
+                  .highlight {
+                    background-color: yellow !important;
+                    transition: background-color 0.3s;
+                  }
+                </style>
+              </head>
+              <body>
+                ${sanitizedHtml}
+              </body>
+            </html>
+          `);
+          iframeDoc.close();
+        }
+      } catch (err) {
+        if (isMounted) {
+          console.error('Error loading HTML content:', err);
+          setError('Erro ao carregar o conteúdo HTML');
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
         }
       }
     };
 
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [toast]);
+    loadContent();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [htmlContent]);
 
   const verifyElement = async (selector: string): Promise<boolean> => {
     return new Promise((resolve) => {
-      if (iframeRef.current && iframeRef.current.contentWindow) {
-        const handleVerifyResult = (event: MessageEvent) => {
-          if (event.data.type === 'VERIFY_ELEMENT_RESULT' && event.data.selector === selector) {
-            window.removeEventListener('message', handleVerifyResult);
-            resolve(event.data.found);
+      if (iframeRef.current && iframeRef.current.contentDocument) {
+        try {
+          console.log('Verificando seletor:', selector); // Log para depuração
+          const element = iframeRef.current.contentDocument.querySelector(selector);
+          console.log('Elemento encontrado:', element); // Log para depuração
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            element.classList.add('highlight');
+            setTimeout(() => element.classList.remove('highlight'), 1500);
           }
-        };
-        window.addEventListener('message', handleVerifyResult);
-        iframeRef.current.contentWindow.postMessage({ type: 'VERIFY_ELEMENT', selector }, '*');
+          resolve(!!element);
+        } catch (error) {
+          console.error('Error verifying element:', error);
+          resolve(false);
+        }
       } else {
+        console.log('iframe ou contentDocument não disponível'); // Log para depuração
         resolve(false);
       }
     });
@@ -97,70 +164,13 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
     onVerifyElement(verifyElement);
   }, [onVerifyElement]);
 
-  const iframeContent = `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <style>
-          .highlight {
-            background-color: yellow !important;
-            transition: background-color 0.3s;
-          }
-        </style>
-      </head>
-      <body>
-        ${htmlContent || ''}
-        <script>
-          window.addEventListener('message', function(event) {
-            if (event.data.type === 'VERIFY_ELEMENT') {
-              try {
-                const element = document.querySelector(event.data.selector);
-                window.parent.postMessage({
-                  type: 'VERIFY_ELEMENT_RESULT',
-                  selector: event.data.selector,
-                  found: !!element
-                }, '*');
-              } catch (error) {
-                window.parent.postMessage({
-                  type: 'VERIFY_ELEMENT_RESULT',
-                  selector: event.data.selector,
-                  error: error.message
-                }, '*');
-              }
-            } else if (event.data.type === 'HIGHLIGHT_ELEMENT') {
-              try {
-                const element = document.querySelector(event.data.selector);
-                if (element) {
-                  element.classList.add('highlight');
-                  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-              } catch (error) {
-                console.error('Error highlighting element:', error);
-              }
-            } else if (event.data.type === 'REMOVE_HIGHLIGHT') {
-              try {
-                const element = document.querySelector(event.data.selector);
-                if (element) {
-                  element.classList.remove('highlight');
-                }
-              } catch (error) {
-                console.error('Error removing highlight:', error);
-              }
-            }
-          });
-        </script>
-      </body>
-    </html>
-  `;
-
   return (
     <div className="h-64 overflow-hidden border border-gray-300">
       <iframe
         ref={iframeRef}
-        srcDoc={iframeContent}
         title="HTML Preview"
         className="w-full h-full"
-        sandbox="allow-scripts"
+        sandbox="allow-same-origin allow-scripts"
       />
     </div>
   );
