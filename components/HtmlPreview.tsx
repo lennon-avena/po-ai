@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import DOMPurify from 'dompurify';
 
@@ -13,6 +13,7 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   // Função auxiliar para converter caminhos relativos em absolutos
@@ -84,6 +85,42 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
     return { sanitizedHtml: cleanHtml, extractedCss };
   };
 
+  const verifyElement = useCallback(async (selector: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const timeoutId = setTimeout(() => {
+        console.log('Timeout: elemento não encontrado');
+        resolve(false);
+      }, 5000); // 5 segundos de timeout
+
+      if (iframeRef.current && iframeRef.current.contentDocument) {
+        try {
+          console.log('Verificando seletor:', selector);
+          const element = iframeRef.current.contentDocument.querySelector(selector);
+          console.log('Elemento encontrado:', element);
+          clearTimeout(timeoutId);
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            element.classList.add('highlight');
+            setTimeout(() => element.classList.remove('highlight'), 1500);
+          }
+          resolve(!!element);
+        } catch (error) {
+          console.error('Error verifying element:', error);
+          clearTimeout(timeoutId);
+          resolve(false);
+        }
+      } else {
+        console.log('iframe ou contentDocument não disponível');
+        clearTimeout(timeoutId);
+        resolve(false);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    onVerifyElement(verifyElement);
+  }, [onVerifyElement, verifyElement]);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -108,6 +145,10 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
                     background-color: yellow !important;
                     transition: background-color 0.3s;
                   }
+                  body {
+                    transform-origin: top left;
+                    overflow: hidden;
+                  }
                 </style>
               </head>
               <body>
@@ -116,6 +157,19 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
             </html>
           `);
           iframeDoc.close();
+
+          // Ajustar o zoom do conteúdo do iframe
+          const containerWidth = containerRef.current?.clientWidth || 0;
+          const containerHeight = containerRef.current?.clientHeight || 0;
+          const contentWidth = iframeDoc.body.scrollWidth;
+          const contentHeight = iframeDoc.body.scrollHeight;
+          const scaleX = containerWidth / contentWidth;
+          const scaleY = containerHeight / contentHeight;
+          const scale = Math.min(scaleX, scaleY, 1);
+
+          iframeDoc.body.style.transform = `scale(${scale})`;
+          iframeDoc.body.style.width = `${contentWidth}px`;
+          iframeDoc.body.style.height = `${contentHeight}px`;
         }
       } catch (err) {
         if (isMounted) {
@@ -136,36 +190,8 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
     };
   }, [htmlContent]);
 
-  const verifyElement = async (selector: string): Promise<boolean> => {
-    return new Promise((resolve) => {
-      if (iframeRef.current && iframeRef.current.contentDocument) {
-        try {
-          console.log('Verificando seletor:', selector); // Log para depuração
-          const element = iframeRef.current.contentDocument.querySelector(selector);
-          console.log('Elemento encontrado:', element); // Log para depuração
-          if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            element.classList.add('highlight');
-            setTimeout(() => element.classList.remove('highlight'), 1500);
-          }
-          resolve(!!element);
-        } catch (error) {
-          console.error('Error verifying element:', error);
-          resolve(false);
-        }
-      } else {
-        console.log('iframe ou contentDocument não disponível'); // Log para depuração
-        resolve(false);
-      }
-    });
-  };
-
-  useEffect(() => {
-    onVerifyElement(verifyElement);
-  }, [onVerifyElement]);
-
   return (
-    <div className="h-64 overflow-hidden border border-gray-300">
+    <div ref={containerRef} className="w-full h-full overflow-hidden border border-gray-300">
       <iframe
         ref={iframeRef}
         title="HTML Preview"

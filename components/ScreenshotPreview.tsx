@@ -175,7 +175,7 @@ const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
   }
 
   return (
-    <div ref={containerRef} className="relative h-64 overflow-auto border border-gray-300">
+    <div ref={containerRef} className="relative h-full overflow-auto border border-gray-300">
       <div 
         style={{ 
           width: imageSize.width, 
