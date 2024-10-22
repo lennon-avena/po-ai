@@ -7,9 +7,18 @@ import DOMPurify from 'dompurify';
 interface HtmlPreviewProps {
   htmlContent: string | null;
   onVerifyElement: (verifyFn: (selector: string) => Promise<boolean>) => void;
+  onHtmlLoaded: () => void;
+  shouldReload: boolean;
+  onReloadComplete: () => void;
 }
 
-const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement }) => {
+const HtmlPreview: React.FC<HtmlPreviewProps> = ({ 
+  htmlContent, 
+  onVerifyElement, 
+  onHtmlLoaded,
+  shouldReload,
+  onReloadComplete
+}) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -90,7 +99,7 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
       const timeoutId = setTimeout(() => {
         console.log('Timeout: elemento não encontrado');
         resolve(false);
-      }, 5000); // 5 segundos de timeout
+      }, 5000);
 
       if (iframeRef.current && iframeRef.current.contentDocument) {
         try {
@@ -118,19 +127,29 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
   }, []);
 
   useEffect(() => {
-    onVerifyElement(verifyElement);
+    const setVerifyFn = () => {
+      onVerifyElement(verifyElement);
+    };
+
+    // Aguarda um curto período antes de definir a função de verificação
+    const timeoutId = setTimeout(setVerifyFn, 500);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
   }, [onVerifyElement, verifyElement]);
 
   useEffect(() => {
     let isMounted = true;
 
     const loadContent = async () => {
-      if (!htmlContent || !isMounted) return;
+      if (!htmlContent || !isMounted || !shouldReload) return;
 
       setIsLoading(true);
       setError(null);
 
       try {
+        console.log('Iniciando carregamento do HTML');
         const { sanitizedHtml, extractedCss } = sanitizeHtml(htmlContent);
         if (iframeRef.current && iframeRef.current.contentDocument && isMounted) {
           const iframeDoc = iframeRef.current.contentDocument;
@@ -170,6 +189,10 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
           iframeDoc.body.style.transform = `scale(${scale})`;
           iframeDoc.body.style.width = `${contentWidth}px`;
           iframeDoc.body.style.height = `${contentHeight}px`;
+
+          console.log('HTML carregado com sucesso');
+          onHtmlLoaded();
+          onReloadComplete();
         }
       } catch (err) {
         if (isMounted) {
@@ -188,7 +211,7 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({ htmlContent, onVerifyElement 
     return () => {
       isMounted = false;
     };
-  }, [htmlContent]);
+  }, [htmlContent, onHtmlLoaded, shouldReload, onReloadComplete]);
 
   return (
     <div ref={containerRef} className="w-full h-full overflow-hidden border border-gray-300">
