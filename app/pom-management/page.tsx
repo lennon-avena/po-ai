@@ -15,6 +15,7 @@ import ScreenshotPreview from '@/components/ScreenshotPreview';
 import HtmlPreview from '@/components/HtmlPreview';
 import { Crosshair } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { PlayCircle, Loader2 } from 'lucide-react';
 
 export default function POMManagementPage() {
   const [poms, setPoms] = useState<POM[]>([]);
@@ -24,6 +25,7 @@ export default function POMManagementPage() {
   const [verifyElementFn, setVerifyElementFn] = useState<((selector: string) => Promise<boolean>) | null>(null);
   const [isHtmlLoaded, setIsHtmlLoaded] = useState(false);
   const pendingVerificationRef = useRef<POMElement | null>(null);
+  const [isBatchValidating, setIsBatchValidating] = useState(false);
 
   useEffect(() => {
     // Carregar os POMs do servidor
@@ -109,6 +111,27 @@ export default function POMManagementPage() {
     }
   };
 
+  const handleBatchValidation = async () => {
+    if (!selectedPOM || !verifyElementFn) return;
+
+    setIsBatchValidating(true);
+    setActiveTab('html');
+    
+    for (const element of selectedPOM.elements) {
+      const selector = generateSelector(element.locator, element.value);
+      if (selector) {
+        await verifyElementInHtml(element);
+      }
+    }
+
+    setIsBatchValidating(false);
+    toast({
+      title: "Validação em lote concluída",
+      description: "Todos os elementos foram verificados.",
+      variant: "default",
+    });
+  };
+
   return (
     <div className="flex h-screen">
       {/* Seção 1: Lista de POMs */}
@@ -134,7 +157,22 @@ export default function POMManagementPage() {
         <h2 className="text-xl font-bold mb-4">Elementos do POM</h2>
         {selectedPOM ? (
           <div>
-            <h3 className="text-lg font-semibold mb-2">{selectedPOM.name}</h3>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">{selectedPOM.name}</h3>
+              <Button
+                onClick={handleBatchValidation}
+                className="flex items-center"
+                title="Validar todos os elementos"
+                disabled={isBatchValidating || !isHtmlLoaded}
+              >
+                {isBatchValidating ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <PlayCircle className="mr-2 h-4 w-4" />
+                )}
+                {isBatchValidating ? 'Validando...' : 'Validar Todos'}
+              </Button>
+            </div>
             <Accordion
               type="single"
               collapsible
