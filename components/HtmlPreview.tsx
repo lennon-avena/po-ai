@@ -24,6 +24,7 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const [isIframeReady, setIsIframeReady] = useState(false);
 
   // Função auxiliar para converter caminhos relativos em absolutos
   const convertToAbsolutePath = (path: string): string => {
@@ -95,6 +96,11 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({
   };
 
   const verifyElement = useCallback(async (selector: string): Promise<boolean> => {
+    if (!isIframeReady) {
+      console.log('iframe não está pronto');
+      return false;
+    }
+
     return new Promise((resolve) => {
       const timeoutId = setTimeout(() => {
         console.log('Timeout: elemento não encontrado');
@@ -124,7 +130,7 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({
         resolve(false);
       }
     });
-  }, []);
+  }, [isIframeReady]);
 
   useEffect(() => {
     const setVerifyFn = () => {
@@ -147,6 +153,7 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({
 
       setIsLoading(true);
       setError(null);
+      setIsIframeReady(false);
 
       try {
         console.log('Iniciando carregamento do HTML');
@@ -193,6 +200,7 @@ const HtmlPreview: React.FC<HtmlPreviewProps> = ({
           console.log('HTML carregado com sucesso');
           onHtmlLoaded();
           onReloadComplete();
+          setIsIframeReady(true);
         }
       } catch (err) {
         if (isMounted) {

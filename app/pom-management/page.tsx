@@ -13,8 +13,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import ScreenshotPreview from '@/components/ScreenshotPreview';
 import HtmlPreview from '@/components/HtmlPreview';
-import { Crosshair, CheckCircle2, XCircle, PlayCircle, Loader2, Loader } from 'lucide-react';
+import { Crosshair, CheckCircle2, XCircle, PlayCircle, Loader2, Loader, Plus, Check, X, Image, Code, Upload } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { Input } from '@/components/ui/input';
+import ScreenshotUploadModal from '@/components/ScreenshotUploadModal';
+import HtmlUploadModal from '@/components/HtmlUploadModal';
 
 export default function POMManagementPage() {
   const [poms, setPoms] = useState<POM[]>([]);
@@ -34,6 +37,11 @@ export default function POMManagementPage() {
   const [isValidating, setIsValidating] = useState(false);
   const [isHtmlLoadedForCurrentPOM, setIsHtmlLoadedForCurrentPOM] = useState(false);
   const [isHtmlReadyForValidation, setIsHtmlReadyForValidation] = useState(false);
+  const [isAddingPOM, setIsAddingPOM] = useState(false);
+  const [newPOMName, setNewPOMName] = useState('');
+  const [isScreenshotModalOpen, setIsScreenshotModalOpen] = useState(false);
+  const [isHtmlModalOpen, setIsHtmlModalOpen] = useState(false);
+  const [selectedPOMForUpload, setSelectedPOMForUpload] = useState<POM | null>(null);
 
   useEffect(() => {
     // Carregar os POMs do servidor
@@ -125,16 +133,32 @@ export default function POMManagementPage() {
 
   const handleTabChange = useCallback((value: string) => {
     setActiveTab(value as 'screenshot' | 'html');
-    // Removemos o reset dos estados aqui
+
   }, []);
 
-  const loadHtmlContent = useCallback(async () => {
-    if (!selectedPOM || isHtmlLoadedForCurrentPOM) return;
+  const handlePOMSelect = useCallback((pom: POM) => {
+    setActivePOM(pom.id);
+    setActiveTab('html');
+    setIsHtmlLoadedForCurrentPOM(false);
+    setIsHtmlLoaded(false); // Adicione esta linha
+    setElementValidationStatus({}); // Limpa os status de validação anteriores
+    setIsHtmlReadyForValidation(false); // Reseta o estado de prontidão para validação
+    loadHtmlContent(pom);
+  }, []);
+
+  const loadHtmlContent = useCallback(async (pom: POM) => {
+    if (isHtmlLoadedForCurrentPOM) return;
 
     setIsLoadingHtml(true);
     try {
+      // Limpa o estado atual do HTML
+      if (verifyElementFnRef.current) {
+        verifyElementFnRef.current = null;
+      }
+      
       // Simula o carregamento do HTML (substitua isso pela lógica real de carregamento)
       await new Promise(resolve => setTimeout(resolve, 1000));
+      
       setIsHtmlLoaded(true);
       setIsHtmlLoadedForCurrentPOM(true);
       setIsHtmlReadyForValidation(true);
@@ -148,7 +172,7 @@ export default function POMManagementPage() {
     } finally {
       setIsLoadingHtml(false);
     }
-  }, [selectedPOM, isHtmlLoadedForCurrentPOM]);
+  }, [isHtmlLoadedForCurrentPOM]);
 
   const handleHtmlLoaded = useCallback(() => {
     setIsHtmlLoaded(true);
@@ -232,14 +256,14 @@ export default function POMManagementPage() {
       
       if (!isHtmlLoadedForCurrentPOM) {
         console.log('Carregando HTML');
-        await loadHtmlContent();
+        await loadHtmlContent(selectedPOM);
         await waitForHtmlVisibility();
       } else {
         console.log('HTML já carregado, prosseguindo com a validação');
         setIsHtmlReadyForValidation(true);
       }
 
-      console.log('HTML visível, aguardando 1 segundo antes de iniciar a validação');
+      console.log('HTML visvel, aguardando 1 segundo antes de iniciar a validação');
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Aguarda a função de verificação estar disponível
@@ -298,21 +322,247 @@ export default function POMManagementPage() {
     }
   };
 
+  // Adicione esta função junto com as outras funções
+  const handleCreatePOM = async () => {
+    if (!newPOMName.trim()) {
+      toast({
+        title: "Nome inválido",
+        description: "Por favor, insira um nome para o POM.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/pom', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newPOMName,
+          elements: [],
+        }),
+      });
+
+      if (!response.ok) throw new Error('Erro ao criar POM');
+
+      const newPOM = await response.json();
+      setPoms(prev => [...prev, newPOM]);
+      setNewPOMName('');
+      setIsAddingPOM(false);
+      
+      toast({
+        title: "POM criado com sucesso",
+        description: `O POM "${newPOMName}" foi criado com sucesso.`,
+      });
+    } catch (error) {
+      console.error('Erro ao criar POM:', error);
+      toast({
+        title: "Erro ao criar POM",
+        description: "Ocorreu um erro ao tentar criar o novo POM.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleScreenshotUpload = (pomId: string) => {
+    const pom = poms.find(p => p.id === pomId);
+    if (pom) {
+      console.log('POM selecionado para upload:', pom);
+      setSelectedPOMForUpload(pom);
+      setIsScreenshotModalOpen(true);
+    } else {
+      console.error('POM não encontrado:', pomId);
+    }
+  };
+
+  const handleHtmlUpload = (pomId: string) => {
+    const pom = poms.find(p => p.id === pomId);
+    if (pom) {
+      setSelectedPOMForUpload(pom);
+      setIsHtmlModalOpen(true);
+    }
+  };
+
+  const handleScreenshotUploadComplete = async (url: string) => {
+    if (selectedPOMForUpload) {
+      try {
+        console.log('Iniciando atualização do POM com novo screenshot:', url);
+        const response = await fetch(`/api/pom/${selectedPOMForUpload.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ screenshotUrl: url }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        }
+
+        const updatedPOM = await response.json();
+        console.log('POM atualizado com sucesso:', updatedPOM);
+
+        setPoms(prevPoms => prevPoms.map(pom => 
+          pom.id === selectedPOMForUpload.id ? { ...pom, screenshotUrl: url } : pom
+        ));
+        toast({
+          title: "Screenshot atualizado com sucesso",
+          description: `O screenshot para o POM "${selectedPOMForUpload.name}" foi atualizado.`,
+        });
+      } catch (error) {
+        console.error('Erro detalhado ao atualizar POM:', error);
+        toast({
+          title: "Erro ao atualizar POM",
+          description: `Ocorreu um erro ao atualizar o POM com o novo screenshot: ${error.message}`,
+          variant: "destructive",
+        });
+      }
+    } else {
+      console.error('Nenhum POM selecionado para upload');
+      toast({
+        title: "Erro ao atualizar POM",
+        description: "Nenhum POM selecionado para atualização.",
+        variant: "destructive",
+      });
+    }
+    setIsScreenshotModalOpen(false);
+  };
+
+  const handleHtmlUploadComplete = async (content: string) => {
+    if (selectedPOMForUpload) {
+      try {
+        const response = await fetch(`/api/pom/${selectedPOMForUpload.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ htmlContent: content }),
+        });
+
+        if (response.ok) {
+          setPoms(prevPoms => prevPoms.map(pom => 
+            pom.id === selectedPOMForUpload.id ? { ...pom, htmlContent: content } : pom
+          ));
+          toast({
+            title: "HTML atualizado com sucesso",
+            description: `O HTML para o POM "${selectedPOMForUpload.name}" foi atualizado.`,
+          });
+          setIsHtmlLoadedForCurrentPOM(false); // Força o recarregamento do HTML
+          setIsHtmlReadyForValidation(false);
+        } else {
+          throw new Error('Failed to update POM');
+        }
+      } catch (error) {
+        console.error('Error updating POM:', error);
+        toast({
+          title: "Erro ao atualizar POM",
+          description: "Ocorreu um erro ao atualizar o POM com o novo conteúdo HTML.",
+          variant: "destructive",
+        });
+      }
+    }
+    setIsHtmlModalOpen(false);
+  };
+
   return (
     <div className="flex h-screen">
       {/* Seção 1: Lista de POMs */}
       <div className="w-64 flex-shrink-0 bg-gray-100 p-4 overflow-y-auto">
-        <h2 className="text-xl font-bold mb-4">Lista de POMs</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">Lista de POMs</h2>
+          {!isAddingPOM && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsAddingPOM(true)}
+              className="h-8 w-8"
+              title="Adicionar novo POM"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+
+        {isAddingPOM && (
+          <div className="flex gap-2 mb-4">
+            <Input
+              type="text"
+              placeholder="Nome do POM"
+              value={newPOMName}
+              onChange={(e) => setNewPOMName(e.target.value)}
+              className="h-8"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleCreatePOM}
+              className="h-8 w-8"
+              title="Confirmar"
+            >
+              <Check className="h-4 w-4 text-green-600" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                setIsAddingPOM(false);
+                setNewPOMName('');
+              }}
+              className="h-8 w-8"
+              title="Cancelar"
+            >
+              <X className="h-4 w-4 text-red-600" />
+            </Button>
+          </div>
+        )}
+
         <ul>
           {poms.map(pom => (
             <li
               key={pom.id}
-              className={`cursor-pointer p-2 mb-2 rounded ${
-                activePOM === pom.id ? 'bg-blue-500 text-white' : 'bg-gray-200'
-              }`}
-              onClick={() => setActivePOM(pom.id)}
+              className="flex items-center justify-between cursor-pointer p-2 mb-2 rounded bg-gray-200 hover:bg-gray-300"
             >
-              {pom.name}
+              <span
+                className={`flex-grow ${
+                  activePOM === pom.id ? 'font-bold text-blue-600' : ''
+                }`}
+                onClick={() => handlePOMSelect(pom)}
+              >
+                {pom.name}
+              </span>
+              <div className="flex space-x-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleScreenshotUpload(pom.id)}
+                  disabled={!!pom.screenshotUrl}
+                  className="h-8 w-8"
+                  title={pom.screenshotUrl ? "Screenshot já enviado" : "Enviar screenshot"}
+                >
+                  {pom.screenshotUrl ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleHtmlUpload(pom.id)}
+                  disabled={!!pom.htmlContent}
+                  className="h-8 w-8"
+                  title={pom.htmlContent ? "HTML já enviado" : "Enviar HTML"}
+                >
+                  {pom.htmlContent ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
@@ -407,9 +657,8 @@ export default function POMManagementPage() {
               <div className="w-full h-full overflow-hidden">
                 <ScreenshotPreview
                   screenshotUrl={selectedPOM.screenshotUrl}
-                  onCoordinateSelect={handleCoordinateSelect}
-                  selectedCoordinates={selectedPOM.elements.map(e => e.coordinates).filter(Boolean) as string[]}
-                  onLocatorUpdate={handleLocatorUpdate}
+                  elements={selectedPOM.elements}
+                  activeElementId={activeElement} // Passando o activeElement
                 />
               </div>
             </TabsContent>
@@ -425,7 +674,8 @@ export default function POMManagementPage() {
                   htmlContent={selectedPOM?.htmlContent || null}
                   onVerifyElement={handleVerifyElement}
                   onHtmlLoaded={handleHtmlLoaded}
-                  shouldReload={!isHtmlLoadedForCurrentPOM}
+                  shouldReload={!isHtmlLoadedForCurrentPOM || !isHtmlLoaded} // Modificado
+                  key={selectedPOM?.id} // Adicione esta linha para forçar a recriação do componente
                   onReloadComplete={() => {
                     setIsHtmlLoadedForCurrentPOM(true);
                     setIsHtmlReadyForValidation(true);
@@ -438,6 +688,20 @@ export default function POMManagementPage() {
           <p className="p-4">Selecione um POM para ver a pré-visualização.</p>
         )}
       </div>
+
+      <ScreenshotUploadModal
+        isOpen={isScreenshotModalOpen}
+        onClose={() => setIsScreenshotModalOpen(false)}
+        pomName={selectedPOMForUpload?.name || ''}
+        onUploadComplete={handleScreenshotUploadComplete}
+      />
+
+      <HtmlUploadModal
+        isOpen={isHtmlModalOpen}
+        onClose={() => setIsHtmlModalOpen(false)}
+        pomName={selectedPOMForUpload?.name || ''}
+        onUploadComplete={handleHtmlUploadComplete}
+      />
     </div>
   );
 }

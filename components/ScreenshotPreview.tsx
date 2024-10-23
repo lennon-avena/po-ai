@@ -1,19 +1,18 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { POMElement } from '@/lib/schemas';
 
 interface ScreenshotPreviewProps {
   screenshotUrl: string | null;
-  onCoordinateSelect?: (coordinates: string) => void;
-  selectedCoordinates?: string[];
-  onLocatorUpdate?: (locator: string) => void;
+  elements: POMElement[];
+  activeElementId: string | null;
 }
 
 const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({ 
   screenshotUrl, 
-  onCoordinateSelect,
-  selectedCoordinates = [],
-  onLocatorUpdate
+  elements = [],
+  activeElementId
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,9 +20,6 @@ const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
-  const [selectionStart, setSelectionStart] = useState<{ x: number, y: number } | null>(null);
-  const [selectionEnd, setSelectionEnd] = useState<{ x: number, y: number } | null>(null);
-  const [isSelecting, setIsSelecting] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -38,7 +34,7 @@ const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
       };
       img.onerror = () => {
         setIsLoading(false);
-        setError('Failed to load image');
+        setError('Falha ao carregar a imagem');
       };
       img.src = screenshotUrl;
     } else {
@@ -47,62 +43,29 @@ const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
     }
   }, [screenshotUrl]);
 
-  const getRelativeCoordinates = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (imageRef.current) {
-      const rect = imageRef.current.getBoundingClientRect();
-      return {
-        x: Math.round(event.clientX - rect.left - imagePosition.x),
-        y: Math.round(event.clientY - rect.top - imagePosition.y)
-      };
-    }
-    return { x: 0, y: 0 };
-  };
-
-  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button === 0) { // Botão esquerdo
-      const { x, y } = getRelativeCoordinates(event);
-      setSelectionStart({ x, y });
-      setSelectionEnd({ x, y });
-      setIsSelecting(true);
-    } else if (event.button === 1) { // Botão do meio
+  const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 1) { // Botão do meio
       event.preventDefault();
       setIsDragging(true);
       setDragStart({ x: event.clientX - imagePosition.x, y: event.clientY - imagePosition.y });
     }
-  }, [imagePosition]);
+  };
 
-  const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (isSelecting && selectionStart) {
-      const { x, y } = getRelativeCoordinates(event);
-      setSelectionEnd({ x, y });
-    } else if (isDragging) {
+  const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (isDragging) {
       const newX = event.clientX - dragStart.x;
       const newY = event.clientY - dragStart.y;
       setImagePosition({ x: newX, y: newY });
     }
-  }, [isSelecting, isDragging, dragStart, selectionStart]);
+  };
 
-  const handleMouseUp = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (isSelecting && selectionStart && selectionEnd) {
-      const { x, y } = getRelativeCoordinates(event);
-      setSelectionEnd({ x, y });
-      setIsSelecting(false);
-
-      const coordinates = `${Math.min(selectionStart.x, x)},${Math.min(selectionStart.y, y)},${Math.max(selectionStart.x, x)},${Math.max(selectionStart.y, y)}`;
-      onCoordinateSelect?.(coordinates);
-      
-      // Atualizar o localizador
-      const locator = `[style*="position: absolute; left: ${Math.min(selectionStart.x, x)}px; top: ${Math.min(selectionStart.y, y)}px;"]`;
-      onLocatorUpdate?.(locator);
-    }
+  const handleMouseUp = () => {
     setIsDragging(false);
-    setIsSelecting(false);
-  }, [isSelecting, selectionStart, selectionEnd, onCoordinateSelect, onLocatorUpdate]);
+  };
 
   useEffect(() => {
     const handleGlobalMouseUp = () => {
       setIsDragging(false);
-      setIsSelecting(false);
     };
 
     document.addEventListener('mouseup', handleGlobalMouseUp);
@@ -111,43 +74,57 @@ const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
     };
   }, []);
 
-  const renderSelection = () => {
-    if (selectionStart && selectionEnd) {
-      const left = Math.min(selectionStart.x, selectionEnd.x);
-      const top = Math.min(selectionStart.y, selectionEnd.y);
-      const width = Math.abs(selectionEnd.x - selectionStart.x);
-      const height = Math.abs(selectionEnd.y - selectionStart.y);
-      return (
-        <div
-          className="absolute border-2 border-blue-500 bg-blue-200 opacity-30"
-          style={{
-            left: `${left}px`,
-            top: `${top}px`,
-            width: `${width}px`,
-            height: `${height}px`
-          }}
-        />
-      );
-    }
-    return null;
-  };
+  const renderElements = () => {
+    return elements.map((element, index) => {
+      if (!element.coordinates) {
+        console.warn(`Elemento sem coordenadas no índice ${index}`);
+        return null;
+      }
 
-  const renderCoordinates = () => {
-    return selectedCoordinates.map((coord, index) => {
-      const [x1, y1, x2, y2] = coord.split(',').map(Number);
+      const [x1, y1, x2, y2] = element.coordinates.split(',').map(Number);
+
+      if ([x1, y1, x2, y2].some(isNaN)) {
+        console.warn(`Coordenadas inválidas no elemento ${element.name}: ${element.coordinates}`);
+        return null;
+      }
+
+      const isActive = element.id === activeElementId;
+
       return (
         <div
-          key={index}
-          className="absolute border-2 border-red-500 rounded-md opacity-50"
+          key={element.id || index}
+          className={`absolute border-2 rounded-md transition-all duration-300 ${
+            isActive ? 'border-red-600 opacity-90 z-10' : 'border-red-500 opacity-50'
+          }`}
           style={{ 
             left: `${x1}px`, 
             top: `${y1}px`,
-            width: `${x2 - x1}px`,
-            height: `${y2 - y1}px`
+            width: `${Math.max(x2 - x1, 0)}px`,
+            height: `${Math.max(y2 - y1, 0)}px`,
+            borderWidth: isActive ? '4px' : '2px',
+            boxShadow: isActive ? '0 0 0 2px rgba(220, 38, 38, 0.5)' : 'none'
           }}
-        />
+        >
+          <div
+            className={`absolute top-0 left-0 text-white rounded-tl-sm rounded-br-sm transition-all duration-300 ${
+              isActive ? 'bg-red-600' : 'bg-red-500'
+            }`}
+            style={{
+              fontSize: isActive ? '0.85rem' : '0.6rem',
+              lineHeight: '1',
+              padding: isActive ? '3px 6px' : '1px 2px',
+              maxWidth: '100%',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontWeight: isActive ? 'bold' : 'normal'
+            }}
+          >
+            {element.name}
+          </div>
+        </div>
       );
-    });
+    }).filter(Boolean);
   };
 
   if (isLoading) {
@@ -182,7 +159,7 @@ const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
           height: imageSize.height, 
           position: 'relative',
           transform: `translate(${imagePosition.x}px, ${imagePosition.y}px)`,
-          cursor: isDragging ? 'grabbing' : isSelecting ? 'crosshair' : 'grab'
+          cursor: isDragging ? 'grabbing' : 'grab'
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -193,11 +170,9 @@ const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
           ref={imageRef}
           src={screenshotUrl} 
           alt="Screenshot Preview" 
-          className="cursor-crosshair"
-          onError={() => setError('Error rendering image')}
+          onError={() => setError('Erro ao renderizar a imagem')}
         />
-        {renderCoordinates()}
-        {renderSelection()}
+        {renderElements()}
       </div>
     </div>
   );

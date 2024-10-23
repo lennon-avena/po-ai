@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 export async function GET(
   request: Request,
@@ -70,5 +72,22 @@ export async function DELETE(
   } catch (error) {
     console.error('Error deleting POM:', error);
     return NextResponse.json({ error: 'Failed to delete POM' }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    const body = await request.json();
+
+    const updatedPOM = await prisma.pOM.update({
+      where: { id },
+      data: body,
+    });
+
+    return NextResponse.json(updatedPOM);
+  } catch (error) {
+    console.error('Erro ao atualizar POM:', error);
+    return NextResponse.json({ error: 'Erro ao atualizar POM' }, { status: 500 });
   }
 }
