@@ -79,7 +79,7 @@ Este documento detalha as melhorias a serem implementadas na aplicação web, in
   }    
   ```    
   
-### 4. Atualização de Testes    
+### 4.  Atualização de Testes    
 - Implementar novos testes unitários e funcionais para garantir que todas as novas funcionalidades e a persistência estejam funcionando conforme esperado.    
 - Certificar-se de que os testes cubram a inserção, atualização e deleção dos novos agrupadores e sua interação com os POMs.    
 - Incluir testes para verificar a integridade da árvore após operações de "Drag and Drop".    
