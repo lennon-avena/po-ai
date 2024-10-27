@@ -57,7 +57,7 @@ Este documento detalha as melhorias a serem implementadas na aplicação web, in
 - Modificar a tabela existente de "POMs" para incluir novas colunas de referência para os campos “Pai” e “Filho”.    
   
 ### 3. Atualização do ORM Prisma    
-- Adicionar uma nova definição de modelo para os agrupadores de POMs no arquivo `prisma/schema.prisma`:    
+- Adicionar uma nova definição de modelo para os agrupadores de POMs no arquivo `schema.prisma`:    
   - Nova tabela para `AgrupadorDePOM`.    
   - Relacionamentos para permitir a hierarquia e as associações conforme descrito nas regras.    
       

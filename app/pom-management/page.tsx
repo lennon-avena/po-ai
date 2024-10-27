@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { POM, POMElement } from '@/lib/schemas';
+import { POM, POMElement, AgrupadorDePOM } from '@/lib/schemas';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import {
@@ -13,11 +13,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import ScreenshotPreview from '@/components/ScreenshotPreview';
 import HtmlPreview from '@/components/HtmlPreview';
-import { Crosshair, CheckCircle2, XCircle, PlayCircle, Loader2, Loader, Plus, Check, X, Image, Code, Upload } from 'lucide-react';
+import { Crosshair, CheckCircle2, XCircle, PlayCircle, Loader2, Loader, Plus, Check, X, Image, Code, Upload, Edit, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import ScreenshotUploadModal from '@/components/ScreenshotUploadModal';
 import HtmlUploadModal from '@/components/HtmlUploadModal';
+import POMFullList from '@/components/POMFullList';
+import ElementModal from '@/components/ElementModal';
 
 export default function POMManagementPage() {
   const [poms, setPoms] = useState<POM[]>([]);
@@ -42,16 +44,39 @@ export default function POMManagementPage() {
   const [isScreenshotModalOpen, setIsScreenshotModalOpen] = useState(false);
   const [isHtmlModalOpen, setIsHtmlModalOpen] = useState(false);
   const [selectedPOMForUpload, setSelectedPOMForUpload] = useState<POM | null>(null);
+  const [agrupadores, setAgrupadores] = useState<AgrupadorDePOM[]>([]);
+  const [selectedPOM, setSelectedPOM] = useState<POM | null>(null);
+  const [isElementModalOpen, setIsElementModalOpen] = useState(false);
+  const [editingElement, setEditingElement] = useState<POMElement | null>(null);
 
   useEffect(() => {
-    // Carregar os POMs do servidor
-    fetch('/api/pom')
-      .then(response => response.json())
-      .then(data => setPoms(data))
-      .catch(error => console.error('Erro ao carregar POMs:', error));
+    // Carregar os POMs e Agrupadores do servidor
+    Promise.all([
+      fetch('/api/pom').then(async response => {
+        const data = await response.json();
+        console.log('POMs carregados:', data);
+        return data;
+      }),
+      fetch('/api/agrupador-pom').then(async response => {
+        const data = await response.json();
+        console.log('Agrupadores carregados:', data);
+        return data;
+      })
+    ])
+      .then(([pomsData, agrupadoresData]) => {
+        setPoms(pomsData);
+        setAgrupadores(Array.isArray(agrupadoresData) ? agrupadoresData : []);
+      })
+      .catch(error => {
+        console.error('Erro ao carregar dados:', error);
+        toast({
+          title: "Erro ao carregar dados",
+          description: "Ocorreu um erro ao carregar os POMs e Agrupadores.",
+          variant: "destructive",
+        });
+        setAgrupadores([]);
+      });
   }, []);
-
-  const selectedPOM = poms.find(pom => pom.id === activePOM);
 
   const handleElementSelect = (elementId: string) => {
     setActiveElement(activeElement === elementId ? null : elementId);
@@ -136,16 +161,6 @@ export default function POMManagementPage() {
 
   }, []);
 
-  const handlePOMSelect = useCallback((pom: POM) => {
-    setActivePOM(pom.id);
-    setActiveTab('html');
-    setIsHtmlLoadedForCurrentPOM(false);
-    setIsHtmlLoaded(false); // Adicione esta linha
-    setElementValidationStatus({}); // Limpa os status de validação anteriores
-    setIsHtmlReadyForValidation(false); // Reseta o estado de prontidão para validação
-    loadHtmlContent(pom);
-  }, []);
-
   const loadHtmlContent = useCallback(async (pom: POM) => {
     if (isHtmlLoadedForCurrentPOM) return;
 
@@ -172,7 +187,37 @@ export default function POMManagementPage() {
     } finally {
       setIsLoadingHtml(false);
     }
-  }, [isHtmlLoadedForCurrentPOM]);
+  }, [isHtmlLoadedForCurrentPOM, setIsHtmlLoaded, setIsHtmlLoadedForCurrentPOM, setIsHtmlReadyForValidation, setIsLoadingHtml, toast]);
+
+  const handlePOMSelect = useCallback(async (pom: POM) => {
+    try {
+      // Buscar o POM completo com elementos do servidor
+      const response = await fetch(`/api/pom/${pom.id}`);
+      if (!response.ok) throw new Error('Falha ao carregar POM');
+      
+      const pomCompleto = await response.json();
+      console.log('POM selecionado:', pomCompleto);
+
+      setSelectedPOM(pomCompleto);
+      setActivePOM(pomCompleto.id);
+      setActiveTab('html');
+      setIsHtmlLoadedForCurrentPOM(false);
+      setIsHtmlLoaded(false);
+      setElementValidationStatus({});
+      setIsHtmlReadyForValidation(false);
+      
+      if (pomCompleto.htmlContent) {
+        loadHtmlContent(pomCompleto);
+      }
+    } catch (error) {
+      console.error('Erro ao selecionar POM:', error);
+      toast({
+        title: "Erro ao carregar POM",
+        description: "Não foi possível carregar os detalhes do POM selecionado.",
+        variant: "destructive",
+      });
+    }
+  }, [loadHtmlContent]);
 
   const handleHtmlLoaded = useCallback(() => {
     setIsHtmlLoaded(true);
@@ -326,7 +371,7 @@ export default function POMManagementPage() {
   const handleCreatePOM = async () => {
     if (!newPOMName.trim()) {
       toast({
-        title: "Nome inválido",
+        title: "Nome invlido",
         description: "Por favor, insira um nome para o POM.",
         variant: "destructive",
       });
@@ -390,43 +435,44 @@ export default function POMManagementPage() {
       try {
         console.log('Iniciando atualização do POM com novo screenshot:', url);
         const response = await fetch(`/api/pom/${selectedPOMForUpload.id}`, {
-          method: 'PATCH',
+          method: 'PUT', // Mudando de PATCH para PUT
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ screenshotUrl: url }),
+          body: JSON.stringify({
+            ...selectedPOMForUpload,
+            screenshotUrl: url
+          }),
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         const updatedPOM = await response.json();
         console.log('POM atualizado com sucesso:', updatedPOM);
 
+        // Atualiza tanto o estado dos POMs quanto o POM selecionado
         setPoms(prevPoms => prevPoms.map(pom => 
-          pom.id === selectedPOMForUpload.id ? { ...pom, screenshotUrl: url } : pom
+          pom.id === selectedPOMForUpload.id ? updatedPOM : pom
         ));
+        
+        if (selectedPOM?.id === selectedPOMForUpload.id) {
+          setSelectedPOM(updatedPOM);
+        }
+
         toast({
           title: "Screenshot atualizado com sucesso",
           description: `O screenshot para o POM "${selectedPOMForUpload.name}" foi atualizado.`,
         });
       } catch (error) {
-        console.error('Erro detalhado ao atualizar POM:', error);
+        console.error('Erro ao atualizar POM:', error);
         toast({
           title: "Erro ao atualizar POM",
-          description: `Ocorreu um erro ao atualizar o POM com o novo screenshot: ${error.message}`,
+          description: "Ocorreu um erro ao atualizar o POM com o novo screenshot.",
           variant: "destructive",
         });
       }
-    } else {
-      console.error('Nenhum POM selecionado para upload');
-      toast({
-        title: "Erro ao atualizar POM",
-        description: "Nenhum POM selecionado para atualização.",
-        variant: "destructive",
-      });
     }
     setIsScreenshotModalOpen(false);
   };
@@ -435,28 +481,41 @@ export default function POMManagementPage() {
     if (selectedPOMForUpload) {
       try {
         const response = await fetch(`/api/pom/${selectedPOMForUpload.id}`, {
-          method: 'PATCH',
+          method: 'PUT', // Mudando de PATCH para PUT
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ htmlContent: content }),
+          body: JSON.stringify({
+            ...selectedPOMForUpload,
+            htmlContent: content
+          }),
         });
 
-        if (response.ok) {
-          setPoms(prevPoms => prevPoms.map(pom => 
-            pom.id === selectedPOMForUpload.id ? { ...pom, htmlContent: content } : pom
-          ));
-          toast({
-            title: "HTML atualizado com sucesso",
-            description: `O HTML para o POM "${selectedPOMForUpload.name}" foi atualizado.`,
-          });
-          setIsHtmlLoadedForCurrentPOM(false); // Força o recarregamento do HTML
-          setIsHtmlReadyForValidation(false);
-        } else {
-          throw new Error('Failed to update POM');
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
+
+        const updatedPOM = await response.json();
+        
+        // Atualiza tanto o estado dos POMs quanto o POM selecionado
+        setPoms(prevPoms => prevPoms.map(pom => 
+          pom.id === selectedPOMForUpload.id ? updatedPOM : pom
+        ));
+        
+        if (selectedPOM?.id === selectedPOMForUpload.id) {
+          setSelectedPOM(updatedPOM);
+          setIsHtmlLoadedForCurrentPOM(false);
+          setIsHtmlLoaded(false);
+          setIsHtmlReadyForValidation(false);
+          loadHtmlContent(updatedPOM);
+        }
+
+        toast({
+          title: "HTML atualizado com sucesso",
+          description: `O HTML para o POM "${selectedPOMForUpload.name}" foi atualizado.`,
+        });
       } catch (error) {
-        console.error('Error updating POM:', error);
+        console.error('Erro ao atualizar POM:', error);
         toast({
           title: "Erro ao atualizar POM",
           description: "Ocorreu um erro ao atualizar o POM com o novo conteúdo HTML.",
@@ -467,10 +526,395 @@ export default function POMManagementPage() {
     setIsHtmlModalOpen(false);
   };
 
+  const handleAddPOM = async (nome: string) => {
+    try {
+      const response = await fetch('/api/pom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nome, elements: [] }),
+      });
+      if (response.ok) {
+        const newPOM = await response.json();
+        setPoms(prevPoms => [...prevPoms, newPOM]);
+      }
+    } catch (error) {
+      console.error('Erro ao adicionar POM:', error);
+    }
+  };
+
+  const handleAddAgrupador = async (nome: string) => {
+    try {
+      const response = await fetch('/api/agrupador-pom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome }),
+      });
+      if (response.ok) {
+        const novoAgrupador = await response.json();
+        setAgrupadores(prevAgrupadores => [...prevAgrupadores, novoAgrupador]);
+      }
+    } catch (error) {
+      console.error('Erro ao adicionar agrupador:', error);
+    }
+  };
+
+  const handleDragStart = (event: React.DragEvent, item: POM | AgrupadorDePOM, type: 'pom' | 'agrupador') => {
+    event.dataTransfer.setData('text/plain', JSON.stringify({ id: item.id, type }));
+  };
+
+  const handleDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+  };
+
+  const handleDrop = async (event: React.DragEvent, targetId: string | null, targetType: 'pom' | 'agrupador') => {
+    event.preventDefault();
+    const data = JSON.parse(event.dataTransfer.getData('text/plain'));
+    const { id: draggedId, type: draggedType } = data;
+
+    // Evita soltar um item sobre ele mesmo
+    if (draggedId === targetId) return;
+
+    // Evita ciclos na hierarquia
+    if (draggedType === 'agrupador' && targetId) {
+      const isDescendant = (parentId: string | null, childId: string): boolean => {
+        const parent = agrupadores.find(a => a.id === parentId);
+        if (!parent) return false;
+        if (parent.id === childId) return true;
+        return parent.filhos.some(filho => isDescendant(filho.id, childId));
+      };
+
+      if (isDescendant(draggedId, targetId)) {
+        toast({
+          title: "Operação inválida",
+          description: "Não é possível mover um agrupador para dentro de seus descendentes",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    try {
+      const endpoint = draggedType === 'pom' ? '/api/pom' : '/api/agrupador-pom';
+      const response = await fetch(`${endpoint}/${draggedId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          agrupadorDePOMId: targetType === 'agrupador' ? targetId : null,
+          paiId: targetType === 'agrupador' ? targetId : null
+        }),
+      });
+
+      if (!response.ok) throw new Error('Falha na requisição');
+      
+      const updatedItem = await response.json();
+
+        if (draggedType === 'pom') {
+        setPoms(prevPoms => 
+          prevPoms.map(pom => pom.id === draggedId ? updatedItem : pom)
+        );
+        } else {
+          setAgrupadores(prevAgrupadores => {
+          // Remove o agrupador da sua posição atual
+          const removeFromHierarchy = (agrupadores: AgrupadorDePOM[]): AgrupadorDePOM[] => {
+            return agrupadores.map(ag => ({
+              ...ag,
+              filhos: ag.filhos.filter(f => f.id !== draggedId)
+                .map(f => ({ ...f, filhos: removeFromHierarchy(f.filhos) }))
+            }));
+          };
+
+          // Adiciona o agrupador na nova posição
+          const addToHierarchy = (agrupadores: AgrupadorDePOM[]): AgrupadorDePOM[] => {
+            return agrupadores.map(ag => {
+              if (ag.id === targetId) {
+                  return {
+                  ...ag,
+                  filhos: [...ag.filhos, updatedItem]
+                };
+              }
+              return {
+                ...ag,
+                filhos: addToHierarchy(ag.filhos)
+              };
+              });
+            };
+
+          let newAgrupadores = removeFromHierarchy(prevAgrupadores)
+                  .filter(a => a.id !== draggedId);
+                
+          if (targetId) {
+            newAgrupadores = addToHierarchy(newAgrupadores);
+            } else {
+            newAgrupadores.push(updatedItem);
+            }
+
+            return newAgrupadores;
+          });
+        }
+
+        toast({
+          title: "Sucesso",
+        description: `${draggedType === 'pom' ? 'POM' : 'Agrupador'} movido com sucesso`,
+        });
+    } catch (error) {
+      console.error('Erro ao atualizar item:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível mover o item",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditPOM = (pom: POM) => {
+    // Implemente a lógica para editar um POM
+  };
+
+  const handleDeletePOM = async (pomId: string) => {
+    // Implemente a lógica para deletar um POM
+  };
+
+  const handleUploadScreenshot = (pomId: string) => {
+    setSelectedPOMForUpload(poms.find(pom => pom.id === pomId) || null);
+    setIsScreenshotModalOpen(true);
+  };
+
+  const handleUploadHtml = (pomId: string) => {
+    setSelectedPOMForUpload(poms.find(pom => pom.id === pomId) || null);
+    setIsHtmlModalOpen(true);
+  };
+
+  const handleShowCoordinates = useCallback((pomId: string, elementId: string) => {
+    const pom = poms.find(p => p.id === pomId);
+    if (pom) {
+      const element = pom.elements.find(e => e.id === elementId);
+      if (element && element.coordinates) {
+        // Aqui você pode implementar a lógica para mostrar as coordenadas
+        // Por exemplo, você pode atualizar o estado para mostrar as coordenadas em um modal ou em uma área específica da página
+        console.log(`Coordenadas do elemento ${element.name}: ${element.coordinates}`);
+        // Exemplo de como você poderia atualizar um estado para mostrar as coordenadas:
+        // setSelectedCoordinates({ pomId, elementId, coordinates: element.coordinates });
+      }
+    }
+  }, [poms]);
+
+  const handleAddElement = () => {
+    setEditingElement(null);
+    setIsElementModalOpen(true);
+  };
+
+  const handleEditElement = (element: POMElement) => {
+    setEditingElement({
+      id: element.id,
+      type: element.type,
+      name: element.name,
+      locator: element.locator,
+      value: element.value || '',
+      coordinates: element.coordinates || '',
+      action: element.action || '',
+      isRequired: element.isRequired,
+    });
+    setIsElementModalOpen(true);
+  };
+
+  const handleSaveElement = async (element: POMElement) => {
+    if (!selectedPOM) return;
+
+    try {
+      const updatedElements = editingElement
+        ? selectedPOM.elements.map(e => (e.id === editingElement.id ? element : e))
+        : [...selectedPOM.elements, { ...element, id: crypto.randomUUID() }];
+
+      const response = await fetch(`/api/pom/${selectedPOM.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...selectedPOM,
+          elements: updatedElements,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Falha ao salvar elemento');
+
+      const updatedPOM = await response.json();
+      setPoms(prevPoms => prevPoms.map(p => p.id === updatedPOM.id ? updatedPOM : p));
+      setSelectedPOM(updatedPOM);
+      setIsElementModalOpen(false);
+      
+      toast({
+        title: `Elemento ${editingElement ? 'atualizado' : 'adicionado'} com sucesso`,
+        description: `O elemento foi ${editingElement ? 'atualizado' : 'adicionado'} ao POM "${selectedPOM.name}".`,
+      });
+    } catch (error) {
+      console.error('Erro ao salvar elemento:', error);
+      toast({
+        title: "Erro ao salvar elemento",
+        description: "Ocorreu um erro ao tentar salvar o elemento. Por favor, tente novamente.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteElement = async (elementId: string) => {
+    if (!selectedPOM) return;
+
+    try {
+      const updatedElements = selectedPOM.elements.filter(e => e.id !== elementId);
+      const response = await fetch(`/api/pom/${selectedPOM.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...selectedPOM,
+          elements: updatedElements,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Falha ao excluir elemento');
+
+      const updatedPOM = await response.json();
+      setPoms(prevPoms => prevPoms.map(p => p.id === updatedPOM.id ? updatedPOM : p));
+      setSelectedPOM(updatedPOM);
+
+      toast({
+        title: "Elemento excluído com sucesso",
+        description: `O elemento foi removido do POM "${selectedPOM.name}".`,
+      });
+    } catch (error) {
+      console.error('Erro ao excluir elemento:', error);
+      toast({
+        title: "Erro ao excluir elemento",
+        description: "Ocorreu um erro ao tentar excluir o elemento. Por favor, tente novamente.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleValidateElement = async (element: POMElement) => {
+    if (!verifyElementFnRef.current) {
+      toast({
+        title: "HTML não carregado",
+        description: "Aguarde o carregamento do HTML para validar o elemento.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const selector = generateSelector(element.locator, element.value);
+      const found = await verifyElementFnRef.current(selector);
+      setElementValidationStatus(prev => ({ ...prev, [element.id!]: found }));
+      toast({
+        title: found ? "Elemento encontrado" : "Elemento não encontrado",
+        description: `O elemento "${element.name}" ${found ? 'foi' : 'não foi'} encontrado no HTML.`,
+        variant: found ? "default" : "destructive",
+      });
+    } catch (error) {
+      console.error('Erro ao verificar elemento:', error);
+      toast({
+        title: "Erro ao verificar elemento",
+        description: "Ocorreu um erro ao tentar verificar o elemento no HTML.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleUpdatePOMAgrupador = async (pomId: string, agrupadorId: string | null) => {
+    try {
+      const response = await fetch(`/api/pom/${pomId}/agrupador`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ agrupadorId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao atualizar associação do POM');
+      }
+
+      // Atualiza o estado local
+      setPoms(prevPoms => prevPoms.map(pom => 
+        pom.id === pomId 
+          ? { ...pom, agrupadorDePOMId: agrupadorId }
+          : pom
+      ));
+    } catch (error) {
+      console.error('Erro ao atualizar associação:', error);
+      toast({
+        title: "Erro ao atualizar associação",
+        description: "Não foi possível atualizar a associação do POM com o agrupador.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleUpdateAgrupadorPai = async (agrupadorId: string, paiId: string | null) => {
+    try {
+      const response = await fetch(`/api/agrupador-pom/${agrupadorId}/pai`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ paiId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao atualizar pai do agrupador');
+      }
+
+      // Atualiza o estado local
+      setAgrupadores(prevAgrupadores => prevAgrupadores.map(agrupador => 
+        agrupador.id === agrupadorId 
+          ? { ...agrupador, paiId }
+          : agrupador
+      ));
+    } catch (error) {
+      console.error('Erro ao atualizar pai:', error);
+      toast({
+        title: "Erro ao atualizar hierarquia",
+        description: "Não foi possível atualizar a hierarquia do agrupador.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditAgrupador = async (agrupador: AgrupadorDePOM) => {
+    // Implemente a lógica de edição do agrupador
+  };
+
+  const handleDeleteAgrupador = async (agrupadorId: string) => {
+    // Implemente a lógica de exclusão do agrupador
+  };
+
   return (
     <div className="flex h-screen">
-      {/* Seção 1: Lista de POMs */}
-      <div className="w-64 flex-shrink-0 bg-gray-100 p-4 overflow-y-auto">
+      <POMFullList
+        poms={poms}
+        agrupadores={agrupadores}
+        onAddPOM={handleAddPOM}
+        onAddAgrupador={handleAddAgrupador}
+        onEditPOM={handleEditPOM}
+        onDeletePOM={handleDeletePOM}
+        onUploadScreenshot={handleUploadScreenshot}
+        onUploadHtml={handleUploadHtml}
+        onShowCoordinates={handleShowCoordinates}
+        onVerifyElement={handleVerifyElement}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        onPOMSelect={handlePOMSelect}
+        onUpdatePOMAgrupador={handleUpdatePOMAgrupador}
+        onUpdateAgrupadorPai={handleUpdateAgrupadorPai}
+        onEditAgrupador={handleEditAgrupador}
+        onDeleteAgrupador={handleDeleteAgrupador}
+      />
+      
+      {/* Seção 1: Lista de POMs - Desabilitada */}
+      {/* <div className="w-64 flex-shrink-0 bg-gray-100 p-4 overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">Lista de POMs</h2>
           {!isAddingPOM && (
@@ -566,63 +1010,97 @@ export default function POMManagementPage() {
             </li>
           ))}
         </ul>
-      </div>
+      </div> */}
 
       {/* Seção 2: Lista de Elementos */}
       <div className="w-80 flex-shrink-0 bg-white p-4 overflow-y-auto border-l border-gray-200">
-        <h2 className="text-xl font-bold mb-4">Elementos do POM</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">Elementos do POM</h2>
+          <div className="flex gap-2">
+            {selectedPOM && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBatchValidation}
+                  disabled={isBatchValidating || !isHtmlReadyForValidation}
+                  title="Validar todos os elementos"
+                >
+                  {isBatchValidating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleAddElement}
+                  title="Adicionar novo elemento"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
         {selectedPOM ? (
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">{selectedPOM.name}</h3>
-              <Button
-                onClick={handleBatchValidation}
-                className="flex items-center"
-                title="Carregar HTML (se necessário) e validar todos os elementos"
-                disabled={isBatchValidating || isLoadingHtml}
-              >
-                {isBatchValidating || isLoadingHtml ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <PlayCircle className="mr-2 h-4 w-4" />
-                )}
-                {isBatchValidating ? 'Validando...' : isLoadingHtml ? 'Carregando HTML...' : 'Validar Todos'}
-              </Button>
-            </div>
-            <Accordion
-              type="single"
-              collapsible
-              className="w-full"
-              value={activeElement}
-              onValueChange={setActiveElement}
-            >
-              {selectedPOM.elements.map((element) => (
+          <Accordion
+            type="single"
+            collapsible
+            className="w-full"
+            value={activeElement}
+            onValueChange={setActiveElement}
+          >
+            {selectedPOM.elements && selectedPOM.elements.length > 0 ? (
+              selectedPOM.elements.map((element) => (
                 <AccordionItem key={element.id} value={element.id}>
-                  <AccordionTrigger
-                    className={`${
-                      activeElement === element.id ? 'bg-blue-100 text-blue-700' : ''
-                    } hover:bg-blue-50 flex justify-between items-center`}
-                  >
+                  <AccordionTrigger className="flex justify-between items-center">
                     <span>{element.name}</span>
                     <div className="flex items-center space-x-2">
-                      <div 
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleFindElement(element);
+                          handleValidateElement(element);
+                        }}
+                        disabled={!isHtmlReadyForValidation}
+                        title="Validar elemento"
+                      >
+                        {elementValidationStatus[element.id!] === undefined ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : elementValidationStatus[element.id!] ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4 text-red-500" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditElement(element);
                         }}
                       >
-                        <Crosshair className="h-4 w-4" />
-                      </div>
-                      {elementValidationStatus[element.id] === true && (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      )}
-                      {elementValidationStatus[element.id] === false && (
-                        <XCircle className="h-4 w-4 text-red-500" />
-                      )}
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteElement(element.id!);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
                   </AccordionTrigger>
                   <AccordionContent>
-                    <div className="p-2">
+                    <div className="space-y-2">
                       <p><strong>Tipo:</strong> {element.type}</p>
                       <p><strong>Localizador:</strong> {element.locator}</p>
                       <p><strong>Valor:</strong> {element.value || 'N/A'}</p>
@@ -632,13 +1110,29 @@ export default function POMManagementPage() {
                     </div>
                   </AccordionContent>
                 </AccordionItem>
-              ))}
-            </Accordion>
-          </div>
+              ))
+            ) : (
+              <p className="text-gray-500 text-center py-4">
+                Nenhum elemento cadastrado para este POM.
+              </p>
+            )}
+          </Accordion>
         ) : (
-          <p>Selecione um POM para ver seus elementos.</p>
+          <p className="text-gray-500 text-center py-4">
+            Selecione um POM para ver seus elementos.
+          </p>
         )}
       </div>
+
+      <ElementModal
+        isOpen={isElementModalOpen}
+        onClose={() => {
+          setIsElementModalOpen(false);
+          setEditingElement(null); // Limpa o elemento em edição ao fechar
+        }}
+        onSave={handleSaveElement}
+        initialData={editingElement}
+      />
 
       {/* Seção 3: Área de Pré-visualização */}
       <div className="flex-grow bg-white overflow-hidden border-l border-gray-200 flex flex-col">

@@ -17,7 +17,17 @@ export const POMSchema = z.object({
   elements: z.array(POMElementSchema).min(1, "Pelo menos um elemento é obrigatório"),
   screenshotUrl: z.string().nullable(),
   htmlContent: z.string().nullable(),
+  agrupadorDePOMId: z.string().nullable(),
+});
+
+export const AgrupadorDePOMSchema = z.object({
+  id: z.string(),
+  nome: z.string().min(1, "Nome do Agrupador é obrigatório"),
+  paiId: z.string().nullable(),
+  filhos: z.lazy(() => z.array(AgrupadorDePOMSchema)),
+  poms: z.array(POMSchema),
 });
 
 export type POMElement = z.infer<typeof POMElementSchema>;
 export type POM = z.infer<typeof POMSchema>;
+export type AgrupadorDePOM = z.infer<typeof AgrupadorDePOMSchema>;
