@@ -88,8 +88,7 @@ po-ai
 ├── package-lock.json
 ├── package.json
 ├── postcss.config.mjs
-├── prisma
-|  └── schema.prisma
+├── schema.prisma
 ├── README.md
 ├── tailwind.config.ts
 └── tsconfig.json
