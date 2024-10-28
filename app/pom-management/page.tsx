@@ -836,12 +836,23 @@ export default function POMManagementPage() {
         throw new Error('Falha ao atualizar associação do POM');
       }
 
-      // Atualiza o estado local
+      const updatedPom = await response.json();
+
+      // Atualiza o estado local incluindo todas as relações
       setPoms(prevPoms => prevPoms.map(pom => 
-        pom.id === pomId 
-          ? { ...pom, agrupadorDePOMId: agrupadorId }
-          : pom
+        pom.id === pomId ? updatedPom : pom
       ));
+
+      // Atualiza os agrupadores para refletir a mudança
+      setAgrupadores(prevAgrupadores => {
+        return prevAgrupadores.map(agrupador => ({
+          ...agrupador,
+          poms: agrupador.id === agrupadorId
+            ? [...(agrupador.poms || []), updatedPom]
+            : (agrupador.poms || []).filter(p => p.id !== pomId)
+        }));
+      });
+
     } catch (error) {
       console.error('Erro ao atualizar associação:', error);
       toast({
@@ -862,21 +873,61 @@ export default function POMManagementPage() {
         body: JSON.stringify({ paiId }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error('Falha ao atualizar pai do agrupador');
+        throw new Error(data.error || 'Falha ao atualizar pai do agrupador');
       }
 
-      // Atualiza o estado local
-      setAgrupadores(prevAgrupadores => prevAgrupadores.map(agrupador => 
-        agrupador.id === agrupadorId 
-          ? { ...agrupador, paiId }
-          : agrupador
-      ));
+      // Atualiza o estado local com a estrutura completa atualizada
+      setAgrupadores(prevAgrupadores => {
+        // Remove o agrupador da sua posição atual
+        const removeFromHierarchy = (agrupadores: AgrupadorDePOM[]): AgrupadorDePOM[] => {
+          return agrupadores.map(ag => ({
+            ...ag,
+            filhos: ag.filhos
+              .filter(f => f.id !== agrupadorId)
+              .map(f => ({ ...f, filhos: removeFromHierarchy(f.filhos) }))
+          }));
+        };
+
+        // Adiciona o agrupador na nova posição
+        const addToHierarchy = (agrupadores: AgrupadorDePOM[]): AgrupadorDePOM[] => {
+          return agrupadores.map(ag => {
+            if (ag.id === paiId) {
+              return {
+                ...ag,
+                filhos: [...ag.filhos, data]
+              };
+            }
+            return {
+              ...ag,
+              filhos: addToHierarchy(ag.filhos)
+            };
+          });
+        };
+
+        let newAgrupadores = removeFromHierarchy(prevAgrupadores)
+          .filter(a => a.id !== agrupadorId);
+
+        if (paiId) {
+          newAgrupadores = addToHierarchy(newAgrupadores);
+        } else {
+          newAgrupadores.push(data);
+        }
+
+        return newAgrupadores;
+      });
+
+      toast({
+        title: "Sucesso",
+        description: "Hierarquia atualizada com sucesso",
+      });
     } catch (error) {
       console.error('Erro ao atualizar pai:', error);
       toast({
         title: "Erro ao atualizar hierarquia",
-        description: "Não foi possível atualizar a hierarquia do agrupador.",
+        description: error instanceof Error ? error.message : "Não foi possível atualizar a hierarquia do agrupador.",
         variant: "destructive",
       });
     }

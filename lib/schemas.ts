@@ -26,6 +26,7 @@ export const AgrupadorDePOMSchema = z.object({
   paiId: z.string().nullable(),
   filhos: z.lazy(() => z.array(AgrupadorDePOMSchema)),
   poms: z.array(POMSchema),
+  pai: z.lazy(() => AgrupadorDePOMSchema.nullable()).optional(),
 });
 
 export type POMElement = z.infer<typeof POMElementSchema>;

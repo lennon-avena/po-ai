@@ -190,117 +190,40 @@ const POMFullList: React.FC<POMFullListProps> = ({
       // Evita soltar um item sobre ele mesmo
       if (draggedId === targetId) return;
 
-      // Verifica se o item já está na raiz e está tentando ser movido para a raiz novamente
-      const isMovingToRoot = targetId === null;
-      if (isMovingToRoot) {
-        if (draggedType === 'pom') {
-          const draggedPom = localPoms.find(p => p.id === draggedId);
-          if (draggedPom && !draggedPom.agrupadorDePOMId) {
-            console.log('POM já está na raiz');
-            return; // Evita mover um POM que já está na raiz
-          }
-        } else if (draggedType === 'agrupador') {
-          const draggedAgrupador = localAgrupadores.find(a => a.id === draggedId);
-          if (draggedAgrupador && !draggedAgrupador.paiId) {
-            console.log('Agrupador já está na raiz');
-            return; // Evita mover um agrupador que já está na raiz
-          }
-        }
-      }
-
       // Se estiver arrastando um POM
       if (draggedType === 'pom') {
-        // Atualiza o estado local imediatamente para feedback visual
-        setLocalPoms(prevPoms => prevPoms.map(pom => 
+        // Atualiza o estado local imediatamente
+        const updatedPoms = localPoms.map(pom => 
           pom.id === draggedId 
             ? { ...pom, agrupadorDePOMId: targetId }
             : pom
-        ));
+        );
+        setLocalPoms(updatedPoms);
 
         // Chama a função de atualização do pai
-        onDrop(event, targetId, targetType);
+        await onUpdatePOMAgrupador(draggedId, targetId);
       }
+      
       // Se estiver arrastando um agrupador
-      else if (draggedType === 'agrupador' && targetType === 'agrupador') {
-        const draggedAgrupador = localAgrupadores.find(a => a.id === draggedId);
-        if (!draggedAgrupador) return;
-
-        // Evita ciclos na hierarquia
-        if (targetId) {
-          const isDescendant = (parentId: string, childId: string): boolean => {
-            const parent = localAgrupadores.find(a => a.id === parentId);
-            if (!parent) return false;
-            if (parent.id === childId) return true;
-            return parent.filhos?.some(filho => isDescendant(filho.id, childId)) || false;
-          };
-
-          if (isDescendant(draggedId, targetId)) {
-            console.log('Não é possível mover um agrupador para dentro de seus descendentes');
-            return;
-          }
-        }
-
-        // Atualiza o estado local imediatamente para feedback visual
-        setLocalAgrupadores(prevAgrupadores => {
-          // Função auxiliar para garantir que filhos sempre seja um array
-          const ensureFilhos = (agrupador: AgrupadorDePOM): AgrupadorDePOM => ({
-            ...agrupador,
-            filhos: Array.isArray(agrupador.filhos) ? agrupador.filhos : [],
-            poms: Array.isArray(agrupador.poms) ? agrupador.poms : []
-          });
-
-          const removeFromHierarchy = (agrupadores: AgrupadorDePOM[]): AgrupadorDePOM[] => {
-            return agrupadores.map(ag => {
-              const agWithFilhos = ensureFilhos(ag);
-              return {
-                ...agWithFilhos,
-                filhos: agWithFilhos.filhos
-                  .filter(f => f.id !== draggedId)
-                  .map(f => ({ ...f, filhos: removeFromHierarchy(Array.isArray(f.filhos) ? f.filhos : []) }))
-              };
-            });
-          };
-
-          const addToHierarchy = (agrupadores: AgrupadorDePOM[]): AgrupadorDePOM[] => {
-            return agrupadores.map(ag => {
-              const agWithFilhos = ensureFilhos(ag);
-              if (ag.id === targetId) {
-                return {
-                  ...agWithFilhos,
-                  filhos: [...agWithFilhos.filhos, { ...ensureFilhos(draggedAgrupador), paiId: targetId }]
-                };
-              }
-              return {
-                ...agWithFilhos,
-                filhos: addToHierarchy(agWithFilhos.filhos)
-              };
-            });
-          };
-
-          // Garante que prevAgrupadores é um array e que cada agrupador tem filhos
-          const safeAgrupadores = prevAgrupadores.map(ensureFilhos);
-          
-          let newAgrupadores = removeFromHierarchy(safeAgrupadores)
-            .filter(a => a.id !== draggedId);
-
-          if (targetId) {
-            newAgrupadores = addToHierarchy(newAgrupadores);
-          } else {
-            newAgrupadores.push({ ...ensureFilhos(draggedAgrupador), paiId: null });
-          }
-
-          return newAgrupadores;
-        });
+      else if (draggedType === 'agrupador') {
+        // Atualiza o estado local imediatamente
+        const updatedAgrupadores = localAgrupadores.map(agrupador => 
+          agrupador.id === draggedId 
+            ? { ...agrupador, paiId: targetId }
+            : agrupador
+        );
+        setLocalAgrupadores(updatedAgrupadores);
 
         // Chama a função de atualização do pai
-        onDrop(event, targetId, targetType);
+        await onUpdateAgrupadorPai(draggedId, targetId);
       }
-    } catch (error) {
-      console.error('Erro ao processar drop:', error);
-    } finally {
+
+      // Limpa os estados de drag & drop
       setDropTarget(null);
       setDraggedItem(null);
       setIsContainerDropTarget(false);
+    } catch (error) {
+      console.error('Erro ao processar drop:', error);
     }
   };
 
@@ -324,6 +247,7 @@ const POMFullList: React.FC<POMFullListProps> = ({
       onDragLeave={handleDragLeave}
       onDrop={(e) => handleDrop(e, pom.id, 'pom')}
       onClick={() => onPOMSelect(pom)}
+      data-agrupador-id={pom.agrupadorDePOMId} // Adiciona o ID do agrupador como atributo de dados
     >
       {/* Indicadores de drop */}
       {dropTarget?.id === pom.id && (

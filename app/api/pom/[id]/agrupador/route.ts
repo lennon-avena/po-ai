@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import prisma from '@/lib/prisma';
 
 export async function PUT(
   request: Request,
@@ -7,14 +7,24 @@ export async function PUT(
 ) {
   try {
     const { agrupadorId } = await request.json();
-    const updatedPOM = await prisma.pOM.update({
-      where: { id: params.id },
-      data: { agrupadorDePOMId: agrupadorId },
+    const pomId = params.id;
+
+    const updatedPom = await prisma.pOM.update({
+      where: { id: pomId },
+      data: { 
+        agrupadorDePOMId: agrupadorId 
+      },
+      include: {
+        elements: true,
+        agrupadorDePOM: true
+      }
     });
-    return NextResponse.json(updatedPOM);
+
+    return NextResponse.json(updatedPom);
   } catch (error) {
+    console.error('Erro ao atualizar POM:', error);
     return NextResponse.json(
-      { error: 'Erro ao atualizar associação do POM' },
+      { error: 'Erro ao atualizar POM' },
       { status: 500 }
     );
   }
